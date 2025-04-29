@@ -263,7 +263,7 @@ class PointNetv2(nn.Module):
         self.normal_channel = normal_channel
         self.with_decoder = with_decoder
         self.out_dim = out_dim
-
+   
         if sa1_params is None:
             sa1_params = dict()
         self.sa1 = PointNetSetAbstractionMsg(

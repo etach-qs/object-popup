@@ -113,13 +113,13 @@ class Trainer(object):
 
     def train_model(self, epochs):
         start = self.load_checkpoint()
-
         tqdm_bar_outer = tqdm.tqdm(range(start, epochs), total=len(range(start, epochs)), ncols=80)
         for epoch in tqdm_bar_outer:
             train_log = defaultdict(float)
 
             tqdm_bar = tqdm.tqdm(self.train_loader, total=len(self.train_loader), ncols=80, leave=False)
             for batch in tqdm_bar:
+
                 train_losses = self.train_step(batch, epoch)
                 tqdm_bar.set_description("Loss: {:.3f}".format(train_losses["total"]))
                 for k, v in train_losses.items():
@@ -127,7 +127,7 @@ class Trainer(object):
 
             train_log = {f"TRAIN_{k}": v / len(self.train_loader) for k, v in train_log.items()}
             train_log["epoch"] = epoch
-
+         
             if epoch % 1 == 0:
                 self.save_checkpoint(epoch)
 
@@ -139,6 +139,7 @@ class Trainer(object):
 
                 val_metrics, val_counters = defaultdict(float), defaultdict(int)
                 for batch in tqdm_bar:
+                    
                     val_losses, tmp_metrics, tmp_counters = self.val_step(batch, epoch)
                     tqdm_bar.set_description("Loss: {:.3f}".format(val_losses["total"]))
                     for k, v in val_losses.items():
@@ -192,9 +193,12 @@ class Trainer(object):
         for i in range(batch_size):
             batch_i = {k: v[i] for k, v in batch.items()}
             output_i = {k: v[i] if isinstance(v, list) else v[i].cpu() for k, v in output.items()}
-
+   
             pred_mesh, pred_class_scores = self.generator.get_mesh_from_predictions_wrapper(batch_i, output_i)
-            gt_mesh = trimesh.load(str(Path(batch_i["path"]) / "object.ply"), process=False)
+            if batch_i['object'].endswith("###"):
+                gt_mesh = trimesh.load(str(Path(batch_i["path"]) / "object_mesh.obj"), process=False)
+            else:
+                gt_mesh = trimesh.load(str(Path(batch_i["path"]) / "object.ply"), process=False)
 
             if self.cfg.undo_preprocessing_eval:
                 translation = batch_i["preprocess_translation"].numpy()

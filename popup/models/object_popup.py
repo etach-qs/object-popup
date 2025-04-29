@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-
+import pdb
 from .pointnetv2 import PointNetv2, square_distance
 from .pointnetv2_segmentation import PointNetv2Seg
 from .decoders import DecoderPointNet2, DecoderPointNet2Seg
@@ -23,11 +23,12 @@ class ObjectPopup(nn.Module):
     ):
         super().__init__()
         # ==> ENCODER SUBJECT
+    
         self.encoder_subject = PointNetv2(**encoder_subject_params)
         self.sbj_local_n_points = sbj_local_n_points
         enc_sbj_out_dim = self.encoder_subject.out_dim
         # <===
-
+        
         # ==> CENTER DECODER
         self.decoder_center = DecoderPointNet2(
             in_dim=self.encoder_subject.out_dim,
@@ -79,18 +80,20 @@ class ObjectPopup(nn.Module):
         # load keypoints in canonical pose
         self.canonical_obj_keypoints = torch.zeros((self.n_onehot_classes, self.n_points, 3), dtype=torch.float,
                                                    requires_grad=False)
-        for class_id in range(self.n_onehot_classes):
-            self.canonical_obj_keypoints[class_id] = \
-                torch.tensor(canonical_obj_keypoints[class_id]["cartesian"], dtype=torch.float, requires_grad=False)
+        
+        # for class_id in range(self.n_onehot_classes):
+        #     self.canonical_obj_keypoints[class_id] = \
+        #         torch.tensor(canonical_obj_keypoints[class_id]["cartesian"], dtype=torch.float, requires_grad=False)
 
     def encode_1st_stage(
         self, subject,
     ):
+        
         batch_size, sbj_n_points, _ = subject.shape
         self.canonical_obj_keypoints = self.canonical_obj_keypoints.to(subject.device)
 
         # encode subject
-        enc_sbj_global = self.encoder_subject(subject)
+        enc_sbj_global = self.encoder_subject(subject)  #[batch_size, 512]
 
         # pred center
         pred_center = self.decoder_center(enc_sbj_global).view(batch_size, 1, 3)  # B x 1 x 3
@@ -119,17 +122,19 @@ class ObjectPopup(nn.Module):
             # convert class ids to one hot vector
             classids = obj_classids.to(subject.device)
         # convert class ids to one hot vector
+  
         classes_enc = F.one_hot(classids, num_classes=self.n_onehot_classes).float()
         enc_object = self.encoder_object(classes_enc)
-
+      
         # find local center
         if obj_center is None:
             local_center = pred_center
         else:
             local_center = obj_center.view(batch_size, 1, 3).to(subject.device)
-
+  
         # encode subject + object
         # local sbj neigborhood
+        
         sbj_local_dist = square_distance(local_center, subject)  # B x 1 x N_points
         sbj_local_idx = sbj_local_dist.squeeze(1).sort(dim=1)[1][:, :self.sbj_local_n_points]  # B x N_local_points
         sbj_local = subject[
@@ -138,7 +143,7 @@ class ObjectPopup(nn.Module):
         ]
         # local object neighborhood
         # load keypoints from internal mapping
-        if obj_keypoints is None:
+        if obj_keypoints is None:   
             classes_one_hot = F.one_hot(classids, num_classes=self.n_onehot_classes).view(batch_size, -1).float()
             obj_keypoints = torch.matmul(
                 classes_one_hot,
@@ -153,7 +158,8 @@ class ObjectPopup(nn.Module):
             obj_keypoints = obj_keypoints - obj_keypoints.mean(dim=1, keepdims=True) + local_center
         else:
             obj_keypoints = obj_keypoints.to(subject.device)
-
+     
+ 
         # concatenate sbj and obj
         if self.with_sbjobj_enc:
             mask_sbj = torch.zeros((batch_size, sbj_local.size(1), 1), dtype=torch.float, device=subject.device)
@@ -168,14 +174,14 @@ class ObjectPopup(nn.Module):
         else:
             enc_sbjobj = None
 
-        return enc_object, enc_sbjobj, obj_keypoints
+        return enc_object, enc_sbjobj, obj_keypoints  # enc_object is class embedding, env_sbjobj is pointnet encoding of object, object_keypoints is GT.
 
     def decode(
         self, enc_subject, enc_object, enc_sbjobj, pred_center, obj_keypoints,
     ):
         batch_size = enc_subject.size(0)
         n_points = obj_keypoints.size(1)
-
+   
         if self.decoder_type == "offsets":
             object_keypoints_t = torch.cat(
                 [obj_keypoints, torch.sin(2 * np.pi * obj_keypoints), torch.cos(2 * np.pi * obj_keypoints)],
@@ -214,7 +220,7 @@ class ObjectPopup(nn.Module):
 
             # Concatenate features
             features = torch.cat([enc_subject, enc_object, enc_sbjobj, object_keypoints_t], dim=1)
-
+            
             # Decode R,t
             R = self.decoder_R(features)
             t = self.decoder_t(features)
@@ -224,6 +230,7 @@ class ObjectPopup(nn.Module):
     def encode(
         self, subject, obj_classids, obj_center=None, obj_scales=None, obj_keypoints=None
     ):
+  
         enc_subject, pred_center, pred_class = self.encode_1st_stage(
             subject
         )
@@ -239,16 +246,17 @@ class ObjectPopup(nn.Module):
         self, subject, obj_classids, obj_keypoints=None,
         obj_scales=None, obj_center=None
     ):
+    
         enc_subject, enc_object, enc_sbjobj, pred_center, pred_class, obj_keypoints = self.encode(
             subject, obj_classids, obj_keypoints=obj_keypoints,
             obj_center=obj_center, obj_scales=obj_scales,
         )
-
+  
         predictions = self.decode(
             enc_subject, enc_object, enc_sbjobj, pred_center, obj_keypoints
         )
 
         if self.with_classifier:
             predictions["obj_class"] = pred_class
-
+   
         return predictions

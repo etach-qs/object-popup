@@ -1,4 +1,5 @@
-datasets = ["grab", "behave"]
+datasets = ["behave","grab","_3DIR"]
+
 
 # DATA SAMPLING
 # type of object keypoints distortion method
@@ -6,7 +7,7 @@ obj_keypoints_init = "local_jitter"
 # number of object keypoints
 obj_keypoints_npoints = 1500
 # type of dataset mixture sampler
-sampler="weighted"
+sampler="random"
 
 # TRAINING
 # number of training epochs
@@ -59,6 +60,8 @@ decoder_type = "offsets"
 # DATA SPLIT
 # mapping of object class name to id
 [objname2classid]
+
+
 backpack=39
 basketball=38
 boxlarge=37

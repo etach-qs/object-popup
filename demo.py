@@ -1,25 +1,23 @@
 import argparse
 import logging
-import multiprocessing as mp
 from pathlib import Path
-import pdb
 import torch
-from popup.core.generator import Generator
-from popup.core.evaluator import Evaluator
-from popup.data.dataset import ObjectPopupDataset
+import numpy as np
+from tqdm import tqdm
 from popup.models.object_popup import ObjectPopup
+from popup.core.generator import Generator
+from popup.data.dataset import ObjectPopupDataset
 from popup.utils.exp import init_experiment
+import pdb
+def load_input_npz(npz_path):
+    data = np.load(npz_path, allow_pickle=True)
+    return data['human_verts'], str(data['obj_name'])
 
-
-def main(cfg, generate, downsample, datasets=None):
-    logging.info("Evaluation start.")
-    # environment setup
-    mp.set_start_method('spawn')
-    torch.backends.cudnn.enabled = True
-    torch.backends.cudnn.benchmark = True
-    torch.multiprocessing.set_sharing_strategy('file_system')
-
-    # load datasets
+@torch.no_grad()
+def run_popup_on_npz_files(cfg):
+    device = torch.device("cuda:0")
+    
+    # 加载模型
     gen_datasets = []
     canonical_obj_meshes, canonical_obj_keypoints = dict(), dict()
     for dataset_name in cfg.datasets:
@@ -31,42 +29,45 @@ def main(cfg, generate, downsample, datasets=None):
         elif dataset_name == "behave":
             gen_datasets.append((dataset_name, ObjectPopupDataset(
                 cfg, cfg.behave_path, objects=cfg.behave["gen_objects"], split_file=cfg.behave["gen_split_file"],
-                eval_mode=True, downsample_factor=10 if downsample else 1
+                eval_mode=True, downsample_factor=1
             )))
         canonical_obj_keypoints.update(gen_datasets[-1][1].canonical_obj_keypoints)
         canonical_obj_meshes.update(gen_datasets[-1][1].canonical_obj_meshes)
+    import pdb; pdb.set_trace()
+    model = ObjectPopup(canonical_obj_keypoints=canonical_obj_keypoints, **cfg.model_params)
+    generator = Generator(device, cfg, canonical_obj_meshes, canonical_obj_keypoints)
+    generator.load_checkpoint(model, cfg.checkpoint_path)
+    model.eval().to(device)
 
-    gen_dataloaders = []
+    input_dir = Path(cfg.input_dir)
+    all_npzs = list(input_dir.glob("*.npz"))
+    output_dir = Path(cfg.exp_folder) / "visualization" / f"epoch_{cfg.epoch}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pdb.set_trace()
+    for npz_path in tqdm(all_npzs, desc="Processing .npz files"):
+        human_verts, obj_name = load_input_npz(npz_path)
+        human_verts = torch.tensor(human_verts, dtype=torch.float32).unsqueeze(0).to(device)  # (1, N, 3)
 
-    for dataset_name, gen_dataset in gen_datasets:
-        gen_dataloaders.append((dataset_name, torch.utils.data.DataLoader(
-            gen_dataset, batch_size=cfg.batch_size, num_workers=cfg.workers, shuffle=False
-        )))
+        # 获取 class id、mesh、keypoints
+        obj_class_id = cfg.objname2classid[obj_name]
+        obj_class_tensor = torch.tensor([obj_class_id], dtype=torch.long).to(device)
 
-        logging.info(f"{dataset_name} dataset length: {len(gen_dataset)}")
+        scale = torch.ones((1, 1), dtype=torch.float32).to(device)
 
-    # create model
-    if generate:
-        if cfg.model_name == "object_popup":
-            network = ObjectPopup(
-                canonical_obj_keypoints=canonical_obj_keypoints, **cfg.model_params
-            )
-        else:
-            raise RuntimeError(f"Unknown model {cfg.model_name}")
+        output = model(human_verts, obj_class_tensor, obj_keypoints=None, obj_scales=scale, obj_center=None)
 
-        # optionally generate predictions before computing metrics
-        generator = Generator(torch.device("cuda:0"), cfg, canonical_obj_meshes, canonical_obj_keypoints)
-        generator.load_checkpoint(network, cfg.checkpoint_path)
-        if datasets is not None:
-            gen_dataloaders = [(name, loader) for (name, loader) in gen_dataloaders if name in datasets]
-        generator.generate(network, gen_dataloaders)
+        pred_mesh, _ = generator.get_mesh_from_predictions(
+            output=output[0].cpu(),
+            preprocess_scale=scale[0].cpu(),
+            obj_class=obj_class_tensor[0].cpu(),
+            cfg=cfg,
+            canonical_obj_keypoints=generator.canonical_obj_keypoints,
+            canonical_obj_meshes=generator.canonical_obj_meshes,
+        )
 
-        evaluator = Evaluator(torch.device("cuda:0"), cfg)
-    else:
-        evaluator = Evaluator(torch.device("cuda:0"), cfg)
-    evaluator.evaluate(datasets)
-    logging.info("Evaluation end.")
-
+        save_path = output_dir / (npz_path.stem + ".obj")
+        pred_mesh.export(str(save_path))
+        logging.info(f"Saved predicted mesh to {save_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Evaluate and optionally generate model predictions")
@@ -81,6 +82,7 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--datasets", type=str, nargs="+", default=None)
     parser.add_argument("--exp-name", type=str, default="experiment",
                         help="Folder name for the experiment if -rc option is used.")
+    parser.add_argument("--input_path",type=str, default="/ssd1/lishujia/object-popup/for_popup")
 
     resume = parser.add_mutually_exclusive_group(required=True)
     resume.add_argument("-ep", "--experiment-prefix", type=str,
@@ -91,4 +93,4 @@ if __name__ == "__main__":
 
     arguments = parser.parse_args()
     config = init_experiment(arguments, train=False)
-    main(config, arguments.generate, arguments.downsample, arguments.datasets)
+    run_popup_on_npz_files(config)

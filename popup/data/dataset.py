@@ -2,14 +2,15 @@ import json
 import pickle as pkl
 from collections import defaultdict
 from typing import NamedTuple, List
-
+import pdb
 import numpy as np
 import trimesh
 from scipy.spatial.transform import Rotation
 from torch.utils.data import Dataset
-
+from popup.utils.exp import init_experiment
 from ..utils.preprocess import estimate_transform
-
+import argparse
+from pathlib import Path
 
 class DataSample(NamedTuple):
     subject: str
@@ -52,7 +53,7 @@ class ObjectPopupDataset(Dataset):
         self.eval_mode = eval_mode
 
         self.subjects = [] if subjects is None else subjects
-
+        
         path_template = "{subject}/{object}_{action}/"
         if split_file is not None:
             with open(split_file, "r") as fp:
@@ -85,10 +86,10 @@ class ObjectPopupDataset(Dataset):
         self.classid2objname = {v: k for k, v in self.cfg.objname2classid.items()}
         dataset_objects = list((self.data_path / "object_keypoints").glob("*.npz"))
         self.dataset_objects = [object_name.stem for object_name in dataset_objects]
-
+       
         self.canonical_obj_meshes = dict()
         self.canonical_obj_keypoints = dict()
-
+      
         for class_id, object_name in self.classid2objname.items():
             if object_name in self.dataset_objects:
                 self.canonical_obj_keypoints[class_id] = dict(np.load(
@@ -97,13 +98,14 @@ class ObjectPopupDataset(Dataset):
                 self.canonical_obj_meshes[class_id] = trimesh.load(
                     str(self.data_path / "object_meshes" / f"{object_name}.ply"),
                 process=False)
-
+    
     def distort_keypoints(self, data_sample, obj_keypoints_can, obj_keypoints_gt):
         if self.cfg.obj_keypoints_init == "local_jitter":
             obj_to_gt_r, obj_to_gt_t = estimate_transform(
                 obj_keypoints_can, obj_keypoints_gt
             )
 
+               
             prob = np.random.uniform()
             if prob <= 0.6:
                 # canonical rotation, jittered translation
@@ -136,7 +138,7 @@ class ObjectPopupDataset(Dataset):
             obj_c = np.zeros(3)
         else:
             raise ValueError(f"Unknown obj_keypoints_init {self.cfg.obj_keypoints_init}")
-
+       
         data_sample["obj_keypoints_in"] = obj_keypoints_in.astype(np.float32)
         data_sample["obj_keypoints_offsets"] = (obj_keypoints_gt - obj_keypoints_in).astype(np.float32)
         data_sample["obj_keypoints_locations"] = (obj_keypoints_gt).astype(np.float32)
@@ -147,6 +149,7 @@ class ObjectPopupDataset(Dataset):
         return data_sample
 
     def get_data_sample(self, index):
+      
         sample = self.data[index]
         path = self.data_path / self.path_template.format(
             subject=sample.subject, object=sample.object, action=sample.action, t_stamp=sample.t_stamp
@@ -163,7 +166,7 @@ class ObjectPopupDataset(Dataset):
         data_sample = {
             "sbj_point_cloud": sbj_point_cloud.astype(np.float32),
             "path": path,
-            "object": sample.object,
+            "object": sample.object,  # name
             "obj_class": self.cfg.objname2classid[sample.object],
             "preprocess_scale": np.array(preprocess_scale, dtype=float),
             "preprocess_translation": np.array(preprocess_translation, dtype=float),
@@ -173,28 +176,69 @@ class ObjectPopupDataset(Dataset):
 
     def __getitem__(self, index):
         data_sample = self.get_data_sample(index)
-
-        if not self.eval_mode:
+   
+   
             # point cloud input
-            obj_mesh = trimesh.load(str(data_sample["path"] / "object.ply"), process=False)
 
+        obj_mesh = trimesh.load(str(data_sample["path"] / "object.ply"), process=True)
+            
             # calculate transformation for object keypoints
-            obj_class_id = self.cfg.objname2classid[data_sample['object']]
-            obj_keypoints_can = np.copy(self.canonical_obj_keypoints[obj_class_id]["cartesian"])
-            obj_keypoints_can = obj_keypoints_can * data_sample["preprocess_scale"]
-            obj_keypoints_triangles = obj_mesh.faces[self.canonical_obj_keypoints[obj_class_id]["triangles_ids"]]
-            obj_keypoints_gt = np.array(trimesh.triangles.barycentric_to_points(
+        obj_class_id = self.cfg.objname2classid[data_sample['object']]
+        obj_keypoints_can = np.copy(self.canonical_obj_keypoints[obj_class_id]["cartesian"])
+        obj_keypoints_can = obj_keypoints_can * data_sample["preprocess_scale"]
+        obj_keypoints_triangles = obj_mesh.faces[self.canonical_obj_keypoints[obj_class_id]["triangles_ids"]]
+        obj_keypoints_gt = np.array(trimesh.triangles.barycentric_to_points(
                 obj_mesh.vertices[obj_keypoints_triangles],
                 self.canonical_obj_keypoints[obj_class_id]["barycentric"]
-            ), dtype=np.float32)
+        ), dtype=np.float32)
 
-            data_sample = self.distort_keypoints(data_sample, obj_keypoints_can, obj_keypoints_gt)
-            data_sample.update({
+        data_sample = self.distort_keypoints(data_sample, obj_keypoints_can, obj_keypoints_gt)
+        data_sample.update({
                 "obj_center": obj_keypoints_gt.mean(axis=0).astype(np.float32),
-            })
-
+        })
+     
         data_sample["path"] = str(data_sample["path"])
         return data_sample
 
     def __len__(self):
         return len(self.data)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("Train the model")
+
+    parser.add_argument("scenario", type=Path)
+
+    parser.add_argument("-b", "--batch-size", type=int)
+    parser.add_argument("-c", "--project-config", type=Path, default="./project_config.toml")
+    parser.add_argument("-w", "--workers", type=int)
+    parser.add_argument("-lr", type=float)
+    parser.add_argument("-nowb", "--no-wandb", action="store_true",
+                        help="Don't use wandb to log statistics.")
+
+    resume = parser.add_mutually_exclusive_group(required=True)
+    resume.add_argument("-ep", "--experiment-prefix", type=str,
+                        help="Prefix of the experiment to continue with the desired start epoch "
+                             "in format <prefix>:<epoch>. Epoch==-1 corresponds to the lates availible epoch."
+                             "No epoch corresponds to starting from scratch.")
+    resume.add_argument("-rc", "--resume-checkpoint", type=str,
+                       help="Absolute path to the checkpoint to continue with the desired start epoch "
+                            "in format <path>:<epoch>.")
+
+    arguments = parser.parse_args()
+    cfg = init_experiment(arguments, train=True)
+    dataset = ObjectPopupDataset(cfg, cfg.grab_path, objects=cfg.grab["train_objects"], subjects=cfg.grab["train_subjects"],
+                actions=cfg.grab["train_actions"])
+    datasest_behave = ObjectPopupDataset(cfg, cfg.behave_path, objects=cfg.behave["train_objects"], split_file=cfg.behave["train_split_file"])
+    dataset_grab = ObjectPopupDataset(
+                cfg, cfg.grab_path, objects=cfg.grab["train_objects"], subjects=cfg.grab["train_subjects"],
+                actions=cfg.grab["train_actions"],
+            )
+    # for i in range(len(dataset)):
+    #     print(i)
+    #     data_sample = dataset[i]
+    print("datasest_behave = {}".format(len(datasest_behave)))
+    print("datasest_grab = {}".format(len(dataset_grab)))
+    for i in range(len(datasest_behave)):
+        data = datasest_behave[i]
+        
+        print("behave:{}".format(i))

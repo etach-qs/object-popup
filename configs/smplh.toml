@@ -2,11 +2,13 @@
 # Directory with experiments
 EXP_ROOT = "./experiments"
 # Directory with SMPL, SMPL-h, nad MANO models
-SMPLX_PATH = "./data/body_models/smplx/models"
+SMPLX_PATH = "/ailab/user/lishujia-hdd/omomo_release/data/smpl_all_models/"  
 # Directory with preprocessed GRAB data
 GRAB_PATH = "./data/preprocessed/grab_smplh/"
 # Directory with preprocessed BEHAVE data
 BEHAVE_PATH = "./data/preprocessed/behave_smplh/"
+
+input_dir = "/ssd1/lishujia/object-popup/for_popup"
 
 
 # GENERAL PREPROCESS CONFIG

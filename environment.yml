@@ -1,4 +1,4 @@
-name: popup
+name: popup1
 channels:
   - defaults
   - pytorch

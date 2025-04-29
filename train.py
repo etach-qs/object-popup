@@ -4,12 +4,13 @@ import os
 import shutil
 import logging
 from pathlib import Path
-
+import pdb
 import torch
 
 from popup.core.trainer import Trainer
 from popup.core.generator import Generator
 from popup.data.dataset import ObjectPopupDataset
+from popup.data.dataset_wild import WildDataset
 from popup.models.object_popup import ObjectPopup
 from popup.utils.exp import init_experiment
 
@@ -38,6 +39,7 @@ def main(cfg):
                 actions=cfg.grab["val_actions"], downsample_factor=5
             ))
         elif dataset == "behave":
+            # import pdb; pdb.set_trace()
             train_datasets.append(ObjectPopupDataset(
                 cfg, cfg.behave_path, objects=cfg.behave["train_objects"], split_file=cfg.behave["train_split_file"],
             ))
@@ -45,9 +47,22 @@ def main(cfg):
                 cfg, cfg.behave_path, objects=cfg.behave["val_objects"], split_file=cfg.behave["val_split_file"],
                 downsample_factor=1
             ))
+        elif dataset == "wild":
+            train_datasets.append(WildDataset(
+                cfg,cfg.wild_path, split_file=cfg.wild["train_split_file"],downsample_factor=1,  ))
+            val_datasets.append(WildDataset(
+                cfg,cfg.wild_path, split_file=cfg.wild["val_split_file"],downsample_factor=1,eval_mode=True))
+        
         logging.info(f"Loaded {dataset} with {len(train_datasets[-1])} / {len(val_datasets[-1])}")
-        canonical_obj_keypoints.update(train_datasets[-1].canonical_obj_keypoints)
-        canonical_obj_meshes.update(train_datasets[-1].canonical_obj_meshes)
+        # if dataset != "wild":
+        # canonical_obj_keypoints.update(train_datasets[-1].canonical_obj_keypoints)
+        # canonical_obj_meshes.update(train_datasets[-1].canonical_obj_meshes)
+        if dataset == "wild":
+            canonical_obj_keypoints.update(val_datasets[-1].canonical_obj_keypoints)
+            canonical_obj_meshes.update(val_datasets[-1].canonical_obj_meshes)
+        else:
+            canonical_obj_keypoints.update(train_datasets[-1].canonical_obj_keypoints)
+            canonical_obj_meshes.update(train_datasets[-1].canonical_obj_meshes)
 
     train_dataset = torch.utils.data.ConcatDataset(train_datasets)
     val_dataset = torch.utils.data.ConcatDataset(val_datasets)

@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 from types import SimpleNamespace
 import pickle as pkl
-
+import os
 import tqdm
 import smplx
 import numpy as np
@@ -18,6 +18,7 @@ from smplx import build_layer
 from config import omegaconf_from_dict
 from transfer_model import run_fitting
 from utils import read_deformation_transfer, np_mesh_to_o3d
+#from utils import np_mesh_to_trimesh
 
 
 def filter_contact_frames(cfg, seq_data):
@@ -143,7 +144,7 @@ def run_smplx2smplh_conversion(dataset, seq_info, cfg):
         model_path=str(cfg.model_path), model_type="smplh", gender=seq_data['gender'], 
         num_betas=10, batch_size=cfg.batch_size, num_pca_comps=12, use_pca=False, use_compressed=False
     ).to(device)
-
+   
     for batch_index, batch in enumerate(tqdm.tqdm(dataloader)):
         for key in batch:
             if torch.is_tensor(batch[key]):
@@ -166,7 +167,7 @@ def run_smplx2smplh_conversion(dataset, seq_info, cfg):
                 v = batch['vertices'][i].detach().cpu().numpy()
                 f = batch['faces'][i].detach().cpu().numpy()
                 mesh_smplx = np_mesh_to_o3d(v, f)
-                o3d.io.write_triangle_mesh(output_mesh_path, mesh_smplx)
+                o3d.io.write_triangle_mesh(output_mesh_path, mesh_smplx) 
 
         # save parameters per-batch
         for k in body.keys():
@@ -185,7 +186,7 @@ def run_smplx2smplh_conversion(dataset, seq_info, cfg):
         rotvec_blhrh[t] = R.as_rotvec()
         
     body["pose_blhrh_rotvec"] = rotvec_blhrh
-    
+
     # save converted data
     sequence_data_path = seq_info.pop("output_seq_path") / f"sequence_data.pkl"
     seq_info["body"] = body
@@ -248,9 +249,13 @@ if __name__ == "__main__":
             cfg.grab_path / "grab_smplh" / f"{seq_info['sbj_id']}" / \
             f"{seq_info['obj_name']}_{seq_info['action']}"
         seq_info["output_seq_path"].mkdir(exist_ok=True, parents=True)
+   
+        if os.path.exists(seq_info["output_seq_path"] / f"sequence_data.pkl"):
+            continue
+        else:
 
-        frame_mask, faces, verts = create_smplx_meshes(seq_data, cfg)
-        seq_info["frame_mask"] = frame_mask
+            frame_mask, faces, verts = create_smplx_meshes(seq_data, cfg)
+            seq_info["frame_mask"] = frame_mask
 
-        mesh_dataset = MeshInMemory(faces, verts, seq_info)
-        run_smplx2smplh_conversion(mesh_dataset, seq_info, cfg)
+            mesh_dataset = MeshInMemory(faces, verts, seq_info)
+            run_smplx2smplh_conversion(mesh_dataset, seq_info, cfg)

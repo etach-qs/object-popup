@@ -75,7 +75,6 @@ class PointNetv2Seg(nn.Module):
         self.in_channel = 3 if in_channel is None else in_channel
         self.with_decoder = with_decoder
         self.out_dim = out_dim
-
         if sa1_params is None:
             sa1_params = dict()
         self.sa1 = PointNetSetAbstractionMsg(
@@ -94,6 +93,7 @@ class PointNetv2Seg(nn.Module):
 
         if sa3_params is None:
             sa3_params = dict()
+       
         self.sa3 = PointNetSetAbstractionMsg(
             npoint=sa3_params.get("npoint", 64), radius_list=sa3_params.get("radius_list", [0.2, 0.4]),
             nsample_list=sa3_params.get("nsample_list", [16, 32]), in_channel=sa3_params.get("in_channel", 256),

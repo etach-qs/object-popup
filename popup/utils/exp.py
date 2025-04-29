@@ -20,8 +20,11 @@ class ExperimentConfig:
 
     # DATASET
     datasets: List
+    input_dir: str
     grab_path: Path = None
     behave_path: Path = None
+    wild_path: Path = None
+    objname2classid1: Dict = None
     objname2classid: Dict = None
     workers: int = None
     obj_keypoints_npoints: int = 1500
@@ -40,7 +43,7 @@ class ExperimentConfig:
     # DATA SPLIT
     grab: Dict = field(default_factory=dict)
     behave: Dict = field(default_factory=dict)
-
+    wild: Dict = field(default_factory=dict)
     # GENERATOR PARAMS
     eval_temporal: bool = False
     undo_preprocessing_eval: bool = True
@@ -67,6 +70,7 @@ class ExperimentConfig:
                 elif dataset == "behave":
                     with (self.behave_path / "metadata.json").open("r") as fp:
                         dataset_objname2classid = json.load(fp)["obj_to_class"]
+
                 self.objname2classid.update(dataset_objname2classid)
 
         self.exp_folder = self.exp_root / self.exp_name
@@ -105,6 +109,10 @@ class ExperimentConfig:
         self.behave["gen_objects"] = self.behave.get("gen_objects", [])
         self.behave["gen_split_file"] = self.behave.get("gen_split_file", "./assets/behave_test.json")
 
+        # wild
+        # self.wild = dict(self.wild)
+
+
     def update(self, **kwargs):
         self.__dict__.update(kwargs)
 
@@ -140,7 +148,8 @@ def init_experiment(args, train=True, local=False):
     EXP_ROOT = Path(project_config.get("EXP_ROOT", "./experiments"))
     GRAB_PATH = Path(project_config.get("GRAB_PATH", ""))
     BEHAVE_PATH = Path(project_config.get("BEHAVE_PATH", ""))
-
+    WILD_PATH = Path("/ailab/user/lishujia-hdd/data_inthe_wild/data")
+    input_dir = Path(project_config.get("input_dir", ""))
     # Load training scenario
     scenario = tomlkit.parse(args.scenario.read_text())
 
@@ -177,14 +186,17 @@ def init_experiment(args, train=True, local=False):
     # Create config
     exp_config = ExperimentConfig(
         # EXPERIMENT
+        input_dir=input_dir,
         exp_root=EXP_ROOT,
         exp_name=exp_name,
         checkpoint_path=checkpoint_path,
         # DATASET
         grab_path=GRAB_PATH,
         behave_path=BEHAVE_PATH,
+        wild_path=WILD_PATH,
         workers=args.workers if args.workers is not None else scenario.get("workers", 8),
         objname2classid=scenario.get("objname2classid", None),
+        objname2classid1=scenario.get("objname2classid1",None),
         obj_keypoints_npoints=scenario.get("obj_keypoints_npoints", 1500),
         sampler=scenario.get("sampler", None),
         # DATA SAMPLING
@@ -196,6 +208,7 @@ def init_experiment(args, train=True, local=False):
         datasets=scenario.get("datasets", ["grab"]),
         grab=scenario.get("grab", {}),
         behave=scenario.get("behave", {}),
+        wild=scenario.get("wild", {}),
         # TRAINING
         epoch=epoch,
         epochs=scenario.get("epochs", 100),

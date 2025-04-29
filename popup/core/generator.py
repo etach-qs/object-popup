@@ -52,21 +52,24 @@ class Generator:
         return network
 
     def get_mesh_from_predictions_wrapper(self, batch, output):
+     
         return self.get_mesh_from_predictions(
-            output, preprocess_scale=batch["preprocess_scale"], obj_class=batch["obj_class"],
-            cfg=self.cfg, canonical_obj_keypoints=self.canonical_obj_keypoints,
-            canonical_obj_meshes=self.canonical_obj_meshes
-        )
+                output, preprocess_scale=batch["preprocess_scale"], obj_class=batch["obj_class"],
+                cfg=self.cfg, canonical_obj_keypoints=self.canonical_obj_keypoints,
+                canonical_obj_meshes=self.canonical_obj_meshes,instance_name = batch['object']
+            )
 
+
+    
     @staticmethod
-    def get_mesh_from_predictions(
+    def get_mesh_from_predictions_3dfuture(
         output, preprocess_scale, obj_class, cfg,
         canonical_obj_keypoints, canonical_obj_meshes
     ):
         # legacy, equal to 1 for GRAB and BEHAVE
         obj_scales = preprocess_scale.float()
         pred_class_scores = None
-
+    
         if cfg.model_name == "object_popup":
             if cfg.model_params.get("with_classifier", False):
                 pred_class_scores = output["obj_class"]
@@ -75,6 +78,66 @@ class Generator:
                 obj_classids = obj_class.item()
             obj_keypoints_in = torch.clone(canonical_obj_keypoints[obj_classids])
             obj_mesh = deepcopy(canonical_obj_meshes[obj_classids])
+
+            if obj_scales is not None:
+                obj_keypoints_in = obj_keypoints_in * obj_scales.reshape(1, 1)
+                obj_mesh.vertices = np.array(obj_mesh.vertices) * obj_scales.reshape(1, 1).numpy()
+
+            # offset is predicted for object placed in the predicted center
+            obj_mesh.vertices = \
+                np.array(obj_mesh.vertices) - \
+                obj_keypoints_in.mean(dim=0, keepdims=True).numpy() + \
+                output["obj_center"].numpy()
+
+            obj_keypoints_in = \
+                obj_keypoints_in - obj_keypoints_in.mean(dim=0, keepdims=True) + output["obj_center"]
+
+            if cfg.model_params.get("decoder_type", "") == "offsets":
+                obj_keypoints_offsets = output["offsets"]
+
+                predicted_mesh = fit_obj_to_offsets(
+                    obj_mesh, obj_keypoints_in.numpy(), obj_keypoints_offsets.detach().numpy()
+                )
+            elif cfg.model_params.get("decoder_type", "") == "Rt":
+                pred_R = output["R"].reshape(3, 3)
+                pred_t = output["t"].reshape(3)
+
+                pred_location = torch.matmul(pred_R, obj_keypoints_in.transpose(1, 0)).transpose(1, 0) + pred_t
+
+                predicted_mesh = fit_obj_to_locations(
+                    obj_mesh, obj_keypoints_in.numpy(), pred_location.detach().numpy()
+                )
+            else:
+                raise RuntimeError(f"Unknown decoder_type {cfg.model_params.get('decoder_type', '')}")
+        else:
+            raise RuntimeError(f"Unknown model name {cfg.model_name}")
+
+        return predicted_mesh, pred_class_scores
+
+
+
+    @staticmethod
+    def get_mesh_from_predictions(
+        output, preprocess_scale, obj_class, cfg,
+        canonical_obj_keypoints, canonical_obj_meshes,instance_name
+    ):
+        # legacy, equal to 1 for GRAB and BEHAVE
+        obj_scales = preprocess_scale.float()
+        pred_class_scores = None
+  
+        if cfg.model_name == "object_popup":
+            if cfg.model_params.get("with_classifier", False):
+                pred_class_scores = output["obj_class"]
+                obj_classids = pred_class_scores.argmax(dim=0).item()
+            else:
+                obj_classids = obj_class.item()
+       
+            if instance_name.endswith("###"):
+                obj_keypoints_in = torch.clone(canonical_obj_keypoints[instance_name[:-3]])
+                obj_mesh = deepcopy(canonical_obj_meshes[instance_name[:-3]])
+            else:
+                obj_keypoints_in = torch.clone(canonical_obj_keypoints[obj_classids])
+                obj_mesh = deepcopy(canonical_obj_meshes[obj_classids])
 
             if obj_scales is not None:
                 obj_keypoints_in = obj_keypoints_in * obj_scales.reshape(1, 1)
@@ -124,7 +187,7 @@ class Generator:
                         obj_classids = None
                     else:
                         obj_classids = batch.get('obj_class').to(self.device)
-
+            
                     # legacy, equal to 1 for GRAB and BEHAVE
                     obj_scales = batch.get('preprocess_scale').float().to(self.device)
 
